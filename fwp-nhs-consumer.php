@@ -33,6 +33,8 @@ class FWPNHSFeedsConsumer {
 	function __construct () {
 		$this->name = strtolower(get_class($this));
 		add_action('init', array($this, 'init'));
+		add_action('feedwordpress_post_edit_controls', array($this, 'feedwordpress_post_edit_controls'), 10, 1);
+		add_action('feedwordpress_save_edit_controls', array($this, 'feedwordpress_save_edit_controls'), 10, 1);
 	} /* FWPNHSFeedsConsumer::__construct () */
 	
 	function init () {
@@ -67,7 +69,31 @@ class FWPNHSFeedsConsumer {
 			'taxonomies' => $taxonomies,
 		));
 	} /* FWPNHSFeedsConsumer::init () */
-}
+	
+	function feedwordpress_post_edit_controls ($post) {
+		if ($post->post_type == 'syndicatedreview' or $post->post_type=='post') :
+		?><p><label><strong>In:</strong>
+<select name="fwpnhsfeedsconsumer_post_type">
+<option value="syndicatedreview"<?php if ($post->post_type == 'syndicatedreview') : ?> selected="selected"<?php endif; ?>>Review Queue</option>
+<option value="post"<?php if ($post->post_type == 'post') : ?> selected="selected"<?php endif; ?>>Posts</option>
+</select></label></p>
+<?php
+		endif;
+	} /* FWPNHSFeedsConsumer::feedwordpress_post_edit_controls () */
+
+	function feedwordpress_save_edit_controls ($post_id) {
+		$from = $_POST['post_type'];
+
+		$to = null;
+		if (isset($_POST['fwpnhsfeedsconsumer_post_type'])) :
+			$to = $_POST['fwpnhsfeedsconsumer_post_type'];
+		endif;
+		
+		if (!is_null($to) and $to != $from) :
+			set_post_field( 'post_type', $to, $post_id);
+		endif;
+	} /* FWPNHSFeedsConsumer::feedwordpress_save_edit_controls () */
+} /* FWPNHSFeedsConsumer */
 
 $nfcAddOn = new FWPNHSFeedsConsumer;
 

@@ -106,9 +106,12 @@ class FWPNHSFeedsConsumer {
 	
 	function admin_posts_search ($search, $q) {
 		if (is_string($search) and strlen($search) > 0) :
-			$search = preg_replace('/^\s+AND\s+/i', '', $search);
-			$search .= " OR (nhsm1.meta_value LIKE '%".esc_sql($q->query_vars['s'])."%') ";
-			$search =  ' AND ('.$search.')';
+			$s = $q->query_vars['s'];
+			if (is_string($s) and strlen($s) > 0) :
+				$search = preg_replace('/^\s+AND\s+/i', '', $search);
+				$search .= " OR (nhsm1.meta_value LIKE '%".esc_sql($s)."%') ";
+				$search = ' AND ('.$search.')';
+			endif;
 		endif;
 		return $search;
 	}

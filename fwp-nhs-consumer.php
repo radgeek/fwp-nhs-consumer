@@ -35,6 +35,11 @@ class FWPNHSFeedsConsumer {
 		add_action('init', array($this, 'init'));
 		add_action('feedwordpress_post_edit_controls', array($this, 'feedwordpress_post_edit_controls'), 10, 1);
 		add_action('feedwordpress_save_edit_controls', array($this, 'feedwordpress_save_edit_controls'), 10, 1);
+		add_action('admin_menu', array($this, 'admin_init'));
+
+		#add_filter('syndicated_item_freshness', function ($updated, $frozen, $updated_ts, $last_rev_ts, $post) {
+		#	return -1; // Sure, why not?
+		#}, 10, 5);
 	} /* FWPNHSFeedsConsumer::__construct () */
 	
 	function init () {
@@ -93,6 +98,34 @@ class FWPNHSFeedsConsumer {
 			set_post_field( 'post_type', $to, $post_id);
 		endif;
 	} /* FWPNHSFeedsConsumer::feedwordpress_save_edit_controls () */
+
+	function admin_init () {
+		add_filter('posts_search', array($this, 'admin_posts_search'), 10, 2);
+		add_filter('posts_join', array($this, 'admin_posts_join'), 10, 2);
+	}
+	
+	function admin_posts_search ($search, $q) {
+		if (is_string($search) and strlen($search) > 0) :
+			$search = preg_replace('/^\s+AND\s+/i', '', $search);
+			$search .= " OR (nhsm1.meta_value LIKE '%".esc_sql($q->query_vars['s'])."%') ";
+			$search =  ' AND ('.$search.')';
+		endif;
+		return $search;
+	}
+	
+	function admin_posts_join ($join, $q) {
+		global $wpdb;
+		
+		$s = $q->query_vars['s'];
+		if (is_string($s) and strlen($s) > 0) :
+			$join .= " LEFT OUTER JOIN {$wpdb->postmeta} AS nhsm1 ON (nhsm1.meta_key='syndication_permalink' AND nhsm1.post_id={$wpdb->posts}.ID)";
+			///*DBG*/ var_dump($join); exit;
+		endif;
+		
+		return $join;
+	}
+	
+	
 } /* FWPNHSFeedsConsumer */
 
 $nfcAddOn = new FWPNHSFeedsConsumer;

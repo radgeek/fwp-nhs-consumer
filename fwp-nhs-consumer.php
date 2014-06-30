@@ -33,22 +33,55 @@ class FWPNHSFeedsConsumer {
 	function __construct () {
 		$this->name = strtolower(get_class($this));
 		add_action('init', array($this, 'init'));
+		add_action('manage_syndicatedreview_posts_columns', array($this, 'manage_syndicatedreview_posts_columns'), 10, 1);
 		add_action('feedwordpress_post_edit_controls', array($this, 'feedwordpress_post_edit_controls'), 10, 1);
 		add_action('feedwordpress_save_edit_controls', array($this, 'feedwordpress_save_edit_controls'), 10, 1);
 		add_action('admin_menu', array($this, 'admin_init'));
-
+		add_action('wp_insert_post_data', array($this, 'wp_insert_post_data'), 10, 2);
+		
 		#add_filter('syndicated_item_freshness', function ($updated, $frozen, $updated_ts, $last_rev_ts, $post) {
 		#	return -1; // Sure, why not?
 		#}, 10, 5);
 	} /* FWPNHSFeedsConsumer::__construct () */
+
+	function wp_insert_post_data ($data, $postarr) {
+		if ($data['post_type']=='syndicatedreview') :
+			
+			// Increment revisions-since-last-seen counter
+			$n = get_option('fwpnfc_to_review_count', 0);
+			$n += 1;
+			update_option('fwpnfc_to_review_count', $n);
+
+		endif;
+		
+		return $data;
+	}
+	
+	function manage_syndicatedreview_posts_columns ($cols) {
+		// O.K., so we have called up the review screen. We can update
+		// the timestamp for last-seen
+		update_option('fwpnfc_to_review_count', 0);
+		update_option('fwpnfc_to_review_ts', time());
+		
+		return $cols;
+	}
 	
 	function init () {
 		$taxonomies = get_object_taxonomies('post', 'names');
+		
+		$reviewQueueLabel = 'Review Queue';
+		if (is_admin()) :
+			$nToReview = get_option('fwpnfc_to_review_count', 0);
+			if ($nToReview > 0) :
+				$reviewQueueLabel = 'Review Q. '.sprintf(' (+%d)', $nToReview);
+			endif;
+		endif;
+		
 		register_post_type('syndicatedreview', array(
 			'labels' => array(
 				'name' => 'Review Items',
 				'singular_name' => 'Review Item',
-				'menu_name' => 'Review Queue',
+				'menu_name' => $reviewQueueLabel,
 			),
 			'exclude_from_search' => true,
 			'public' => false,

@@ -1,0 +1,27 @@
+.fwp-nhs-notification-icon {
+	background-color: red;
+	color: white;
+	font-weight: bold;
+	text-align: center;
+	
+	position: absolute;
+	width: 20px;
+	height: 20px;
+	top: 0px;
+	left: 0px;
+	padding: 7px;
+	
+}
+
+.fwp-nhs-post-update {
+	display: inline-block;
+	font-weight: bold;
+	font-style: normal;
+	color: white;
+	background-color: red;
+
+	vertical-align: top;
+	padding: 0px 10px;
+	font-size: 0.7em;
+}
+

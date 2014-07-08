@@ -4,7 +4,7 @@ Plugin Name: FWP+: NHS Feeds Consumer
 Plugin URI: https://github.com/radgeek/fwp-nhs-consumer
 Description: A FeedWordPress filter that fetches full content and locally caches images from UK NHS feeds you syndicate, and adds additional options to help with workflow in processing content from NHS feeds.
 Author: Charles Johnson
-Version: 2014.0702
+Version: 2014.0707
 Author URI: http://feedwordpress.radgeek.com/
 */
 
@@ -52,8 +52,20 @@ class FWPNHSFeedsConsumer {
 		add_action('feedwordpress_admin_page_feeds_meta_boxes', array(&$this, 'add_settings_box'));
 		add_action('feedwordpress_admin_page_feeds_save', array(&$this, 'save_settings'), 10, 2);
 
+		add_action('feedwordpress_ui_erase_link_text', array(&$this, 'feedwordpress_ui_erase_link_text'), 10);
+		add_action('feedwordpress_ui_zap_link_text', array(&$this, 'feedwordpress_ui_zap_link_text'), 10);
 	} /* FWPNHSFeedsConsumer::__construct () */
 
+	function feedwordpress_ui_erase_link_text ($text) {
+		$text = __('Erase/Re-Download if Available');
+		return $text;
+	}
+	
+	function feedwordpress_ui_zap_link_text ($text) {
+		$text = __('Zap/Don&#8217;t Re-Download');
+		return $text;
+	}
+	
 	function syndicated_post_fix_revision_meta ($revision_id, $post) {
 
 		# How we know that an NHS feed is providing full content
@@ -99,7 +111,7 @@ class FWPNHSFeedsConsumer {
 						// current content.
 						$post_id = $post->wp_id();
 						update_post_meta($post_id, "_syndicated_revision_full_html", array("id" => $revision_id, "url" => $href));
-						
+
 						if (
 							$post->freshness() > 0
 						) :
@@ -169,8 +181,10 @@ class FWPNHSFeedsConsumer {
 							// Save as a revision of the existing post.
 							$ok = $this->insert_revision($rev, $post);
 							
-							// Fire an action indicating that we've updated
-							do_action('update_syndicated_item', $post->ID, $oPost);
+							if ($ok) :
+								// Fire an action indicating that we've updated
+								do_action('update_syndicated_item', $post->ID, $oPost);
+							endif;
 						endif;
 						
 						if ($ok) :
@@ -357,6 +371,9 @@ class FWPNHSFeedsConsumer {
 	} /* FWPNHSFeedsConsumer::grab_text () */
 	
 	function insert_revision ($rev, $post) {
+		$origRev = $rev;
+		$origPost = $post;
+		
 		$success = true; // Innocent until proven guilty
 		
 		if (strlen(trim($rev->post_content)) > 0) :
@@ -373,9 +390,48 @@ class FWPNHSFeedsConsumer {
 			$rev->post_status = $post->post_status;
 			$rev->post_parent = 0;
 			
-			$new_rev_id = _wp_put_post_revision($rev, /*autosave=*/ false);
+			// Janky retro-active firing of Keyword Filters, if avail
+			$oRev = new FeedWordPressLocalPost($rev);
+			$link = $oRev->feed();
 			
-			if (!is_wp_error($new_rev_id)) :
+			global $fwpKeywordFilters;
+
+			$entry = (array) $rev;
+			$tax_input = null;
+			if (class_exists('FWPKeywordFilters')) :
+				$entry = $fwpKeywordFilters->syndicated_entry((array) $rev, $oRev);
+			
+				if (!is_null($entry)) :
+					$entry = $fwpKeywordFilters->syndicated_post((array) $rev, $oRev);
+				endif;
+				
+				if (!is_null($entry)) :
+					$tax_input = $entry['tax_input'];
+				endif;
+			endif;
+
+			if (!is_null($entry)) :
+				$new_rev_id = _wp_put_post_revision($rev, /*autosave=*/ false);
+			else :
+				// This is a retro-active filtering out. In that
+				// case we actually need to go back and remove
+				// the *the non-full-HTML revision* from
+				// the wp_posts table because it should be as if
+				// it was never syndicated.
+				$revision_id = $origRev->ID;
+				wp_delete_post_revision($revision_id);
+
+				if ($origPost->post_modified_gmt == $origRev->post_modified_gmt) :
+					wp_delete_post($origPost->ID);
+				endif;
+				
+				$new_rev_id = NULL;
+			endif;
+
+			if (is_null($new_rev_id)) :
+				$success = true;
+				
+			elseif (!is_wp_error($new_rev_id)) :
 			// Now check to see whether the revision we just revised
 			// was the current revision. . .
 
@@ -383,6 +439,40 @@ class FWPNHSFeedsConsumer {
 					wp_restore_post_revision($new_rev_id);
 				endif;
 
+			// Apply any terms that we have accumulated from the
+			// after the fact filtering. . . .
+				if (count($tax_input) > 0) :
+					foreach ($tax_input as $taxonomy => $terms) :
+						if (is_array($terms)) :
+							$terms = array_filter($terms);
+						endif;
+						
+						$res = wp_set_object_terms(
+							/*post_id=*/ $post->ID,
+							/*terms=*/ $terms,
+							/*taxonomy=*/ $taxonomy,
+							/*append=*/ true
+						);
+
+						FeedWordPress::diagnostic(
+						'syndicated_posts:categories',
+						'Category: post('.json_encode($post->ID).') '.$taxonomy
+						.' := '
+						.json_encode($terms)
+						.' / result: '
+						.json_encode($res)
+						);
+
+					endforeach;
+			FeedWordPress::diagnostic(
+						'syndicated_posts:categories',
+						'Category: post('.json_encode($post->ID).') '.$taxonomy
+						.' := '
+						.json_encode($terms)
+						.' / result: '
+						.json_encode($res)
+					);	endif;
+							
 			else :
 				$success = false;
 			endif;
@@ -428,6 +518,18 @@ class FWPNHSFeedsConsumer {
 	} /* FWPNHSFeedsConsumer::syndicated_item_revision () */
 	
 	function init () {
+		register_taxonomy('topics', 'post', array(
+			'labels' => array(
+			'name' => 'Topics',
+			'singular_name' => 'Topic',
+			'menu_name' => 'Topic',
+			),
+			'public' => true,
+			'show_ui' => true,
+			'show_admin_column' => true,
+			'hierarchical' => false,
+		));
+
 		$taxonomies = get_object_taxonomies('post', 'names');
 		
 		$reviewQueueLabel = __('Review Queue');

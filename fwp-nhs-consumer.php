@@ -4,13 +4,16 @@ Plugin Name: FWP+: NHS Feeds Consumer
 Plugin URI: https://github.com/radgeek/fwp-nhs-consumer
 Description: A FeedWordPress filter that fetches full content and locally caches images from UK NHS feeds you syndicate, and adds additional options to help with workflow in processing content from NHS feeds.
 Author: Charles Johnson
-Version: 2014.0707
+Version: 2014.0715
 Author URI: http://feedwordpress.radgeek.com/
 */
 
 define('FWPNFC_CACHE_IMAGES_DEFAULT', 'no');
 define('FWPNFC_GRAB_FULL_HTML_DEFAULT', 'no');
 define('FWPNFC_PROCESS_POSTS_MAX', 10);
+
+require_once(dirname(__FILE__).'/fwpnc_revisions.class.php');
+require_once(dirname(__FILE__).'/fwpnc_traverse.class.php');
 
 global $fwpnfc_path;
 
@@ -30,9 +33,12 @@ endif;
 class FWPNHSFeedsConsumer {
 	private $name;
 	private $post;
+	private $traverse;
 	
 	function __construct () {
 		$this->name = strtolower(get_class($this));
+		$this->traverse = new FWPNC_Traverse;
+		
 		add_action('init', array($this, 'init'));
 
 		add_action('feedwordpress_post_edit_controls', array($this, 'feedwordpress_post_edit_controls'), 10, 1);
@@ -251,7 +257,7 @@ class FWPNHSFeedsConsumer {
 		else :
 			$timeout = 60;
 		endif;
-		
+
 		FeedWordPress::diagnostic('nfc:capture:http', "HTTP &raquo;&raquo; GET [$url] (".__METHOD__.")");
 		$http = wp_remote_request($url, array(
 			'headers' => $headers,
@@ -503,17 +509,7 @@ class FWPNHSFeedsConsumer {
 
 		if ($notify_revisions) :
 			$soPost = (object) $post->post;
-			$post_type = $soPost->post_type;
-			$map = get_option('fwpnfc_to_review_map', array());
-			
-			if (!is_array($map)) : $map = array(); endif;
-			if (!isset($map[$post_type])) : $map[$post_type] = array(); endif;
-			if (!isset($map[$post_type][$id])) : $map[$post_type][$id] = 0; endif;
-			
-			// Increment revisions-since-last-seen counter
-			$map[$post_type][$id] += 1;
-			
-			update_option('fwpnfc_to_review_map', $map);
+			FWPNC_Revisions::add_revision($id, $soPost);
 		endif;
 	} /* FWPNHSFeedsConsumer::syndicated_item_revision () */
 	
@@ -636,15 +632,10 @@ class FWPNHSFeedsConsumer {
 	////////////////////////////////////////////////////////////////////////////
 	
 	function wp_ajax_fwp_nhs_review_queue_count () {
-		$mapToReview = get_option('fwpnfc_to_review_map', array());
 
 		$out = array();
-		
-		$out['syndicatedreviewnotices'] = null;
-		if ($nToReview > 0) :
-			$out['syndicatedreviewnotices'] = sprintf('+%d', $nToReview);
-		endif;
 
+		$mapToReview = FWPNC_Revisions::revisions_counts();
 		if (count($mapToReview) > 0) :
 			$out['revisionsnotices'] = $mapToReview;
 		endif;
@@ -657,22 +648,10 @@ class FWPNHSFeedsConsumer {
 	} /* FWPNHSFeedsConsumer::wp_ajax_fwp_nhs_review_queue_count () */
 	
 	function wp_ajax_fwp_nhs_review_queue_seen () {
-		$mapToReview = get_option('fwpnfc_to_review_map', array());
-
-		foreach (MyPHP::post('seen', array()) as $what => $which) :
-			foreach ($which as $post_id => $status) :
-				$post_id = intval($post_id);
-				if (isset($mapToReview[$what][$post_id])) :
-					unset($mapToReview[$what][$post_id]);
-				endif;
-			endforeach;
-		endforeach; 	
-
-		// Now write back the version with the updates taken out.
-		update_option('fwpnfc_to_review_map', $mapToReview);
+		$out = FWPNC_Revisions::mark_revision_seen(MyPHP::post('seen', array()));
 		
 		header ("Content-Type: application/json");
-		echo json_encode($mapToReview);
+		echo json_encode($out);
 		
 		// This is an AJAX reuqest, so close it out thus.
 		die;
@@ -713,6 +692,18 @@ class FWPNHSFeedsConsumer {
 		"global-setting-default" => FWPNFC_GRAB_FULL_HTML_DEFAULT,
 		"default-input-value" => 'default',
 		);
+		
+		$traverseModeOnSelector = array(
+		"no" => __("<strong>Only check the feed for latest updates:</strong> Don't attempt to page back through the full archives."),
+		"yes" => __("<strong>Page back through to retrieve full archives:</strong> Page back through the archives and try to retrieve all the articles available."),
+		);
+		$tmoParams = array(
+		'input-name' => "nfc_traverse_mode_on",
+		"setting-default" => NULL,
+		"global-setting-default" => "no",
+		"default-input-value" => 'default',
+		);
+
 		$notify_revisions = $page->setting('fwpnfc notify revisions', true);
 ?>
 		<style type="text/css">
@@ -738,16 +729,42 @@ class FWPNHSFeedsConsumer {
 			);
 		?></td></tr>
 		
-		<?php
+<?php
+		// GLOBAL ONLY SETTINGS: Queued web requests max count
 		if ($page->for_default_settings()) :
 			$value = $this->process_posts_max();
-		?>
+?>
 		<tr><th scope="row"><?php _e('Queued web requests:'); ?></th>
 		<td><p>Process <input type="number" min="-1" step="1" size="4" value="<?php print esc_attr($value); ?>" name="fwpnfc_process_posts_max" /> queued requests per update cycle.</p>
 		<div class="setting-description">If you start seeing long delays between when posts are syndicated and when their full text is retrieved &#8212; or if posts start piling up in the NHS Feed API Post Processing Queue &#8212; you may need to adjust this setting higher. If you start noticing that update processes take too long to complete, you may need to adjust this setting lower. Use a value of <code>-1</code> to force NHS Feeds Consumer to process <em>all</em> queued requests during <em>every</em> update cycle.</div>
 		</td></tr>
-		<?php endif; ?>
-		
+<?php
+		endif; 
+?>
+		<tr><th scope="row"><?php _e('Retrieve full archives:'); ?></th>
+		<td><p>If the feed indicates that it is split into pages for old posts...</p>
+		<?php
+			$page->setting_radio_control(
+				'traverse mode on', 'traverse_mode_on',
+				$traverseModeOnSelector, $tmoParams
+			);
+
+		if ($page->for_feed_settings() and $page->setting('traverse mode on', 'no')=='yes') :
+			$linkNext = $page->setting('traverse mode next', NULL);
+			
+			if (!is_null($linkNext)) :
+?>
+<p style="margin: 1.0em; border-radius: 5px; background-color: #307030; color: white; padding: 1.0em;"><strong>Traversal in progress:</strong> On the next scheduled update
+for this feed, FeedWordPress will check the archival URL: <code><a style="color: white;" href="<?php print esc_url($linkNext); ?>"><?php print esc_url($linkNext); ?></a></code></p>
+<?php
+			endif;
+		endif;
+		?>
+		<p><strong>NOTE:</strong> You should only need to turn this on
+		<em>once</em> for any given feed. After you've retrieved the
+		full archives, this setting will flip off automatically, and
+		you shouldn't need to flip it back on.</p>
+		</td></tr>
 		</table>
 <?php
 	} /* FWPNHSFeedsConsumer::display_settings () */
@@ -758,7 +775,8 @@ class FWPNHSFeedsConsumer {
 			$page->update_setting('fwpnfc notify revisions', $notify_revisions);
 			
 			$page->update_setting('grab full html', $params['nfc_grab_full_html']);
-	
+			$page->update_setting('traverse mode on', $params['nfc_traverse_mode_on']);
+			
 			if ($page->for_default_settings()) :
 				update_option('fwpnfc_process_posts_max', $params['fwpnfc_process_posts_max']);
 

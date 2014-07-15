@@ -1,10 +1,43 @@
+function fwpNHSNotificationUpdateLabelRemove (wot) {
+	var post = jQuery(wot).attr('id').match(/^fwp-nhs-remove-update-label-(.+)-([0-9]+)$/, "$0\n$1");
+	var post_type = post[1];
+	var post_id = post[2];
+	var seenIt = {};
+	
+	seenIt[post_type] = {};
+	seenIt[post_type][post_id] = true;
+	
+	jQuery.ajax({
+		type: "POST",
+		url: ajaxurl,
+		data: {
+			action: "fwp_nhs_review_queue_seen",
+			seen: seenIt
+		}
+	})
+	.done(function (response) {
+
+		for (var post_type in response[0]) {
+			for (var post_id in response[0][post_type]) {
+				// Highlight it.
+				jQuery('.wp-list-table.posts #post-'+post_id).removeClass('fwp-nhs-has-update-notice');
+				jQuery('#fwp-nhs-remove-update-tag-'+post_type+'-'+post_id).remove();
+			} /* for */
+		} /* for */
+	})
+	.fail(function (response) { /* NOOP */ });
+
+	return false;
+}
+
 (function($) {
-	function fwpNHSNotificationUpdateLabel (N) {
-		var txt = ' <em class="fwp-nhs-post-update">UPDATE';
+	
+	function fwpNHSNotificationUpdateLabel (N, id, post_type) {
+		var txt = ' <em id="fwp-nhs-remove-update-tag-'+post_type+'-'+id.toString()+'" class="fwp-nhs-post-update">UPDATE';
 		if (N > 1) {
 			txt += ' ('+N.toString()+')';
 		} /* if */
-		txt += '</em>';
+		txt += '| <a href="#" id="fwp-nhs-remove-update-label-'+post_type+'-'+id.toString()+'" onclick="fwpNHSNotificationUpdateLabelRemove(this); return false;">×</a></em>';
 		return txt;
 	}
 	function fwpNHSNotificationIcons (response) {
@@ -20,8 +53,8 @@
 
 					$( '.wp-list-table.posts' ).find('#post-' + i).each( function () {
 						// Highlight it.
-						$(this).css('background-color', '#c0ffff');
-						$(this).find('.post-title .row-title').append(fwpNHSNotificationUpdateLabel(postN));
+						$(this).addClass('fwp-nhs-has-update-notice');
+						$(fwpNHSNotificationUpdateLabel(postN, i, post_type)).insertAfter($(this).find('.post-title .row-title'));
 						
 						// Remove count from total.
 						N -= postN;
@@ -47,16 +80,6 @@
 				}
 			} /* for */
 			
-			$.ajax({
-				type: "POST",
-				url: ajaxurl,
-				data: {
-					action: "fwp_nhs_review_queue_seen",
-					seen: seenIt
-				}
-			})
-			.done(function (response) { /* NOOP */ })
-			.fail(function (response) { /* NOOP */ });
 		} /* if */
 	} /* function fwpNHSNotificationIcons () */
 

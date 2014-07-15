@@ -21,7 +21,17 @@
 	background-color: red;
 
 	vertical-align: top;
+	margin-left: 10px;
 	padding: 0px 10px;
 	font-size: 0.7em;
+}
+
+.fwp-nhs-post-update a:link, .fwp-nhs-post-update a:visited {
+	color: white;
+	text-decoration: none;
+}
+
+.fwp-nhs-has-update-notice {
+	background-color: #c0ffff;
 }
 
